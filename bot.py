@@ -1,10 +1,11 @@
 import os
 import json
 import time
+import threading
 import urllib.request
 import urllib.parse
-import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
 
 # ==============================
 # SOZLAMALAR
@@ -17,40 +18,27 @@ if not TOKEN:
 
 API = f"https://api.telegram.org/bot{TOKEN}"
 
+
 # ==============================
 # TELEGRAM API
 # ==============================
 
 def telegram(method, data=None):
-    data = data or {}
+    url = f"{API}/{method}"
 
-    encoded = urllib.parse.urlencode(data).encode()
+    if data is None:
+        data = {}
+
+    encoded = urllib.parse.urlencode(data).encode("utf-8")
 
     request = urllib.request.Request(
-        f"{API}/{method}",
+        url,
         data=encoded,
         method="POST"
     )
 
     with urllib.request.urlopen(request, timeout=40) as response:
-        return json.loads(response.read().decode())
-
-
-# ==============================
-# WEBHOOKNI O'CHIRISH
-# ==============================
-
-def prepare_bot():
-    try:
-        result = telegram(
-            "deleteWebhook",
-            {"drop_pending_updates": False}
-        )
-
-        print("Webhook holati:", result)
-
-    except Exception as e:
-        print("Webhook xatosi:", e)
+        return json.loads(response.read().decode("utf-8"))
 
 
 # ==============================
@@ -67,23 +55,93 @@ def send_message(chat_id, text):
             }
         )
 
-        print("Xabar yuborildi:", result)
+        if not result.get("ok"):
+            print("sendMessage xatosi:", result)
 
     except Exception as e:
         print("Xabar yuborishda xato:", e)
 
 
 # ==============================
-# BOT ISHI
+# BUYRUQLAR
+# ==============================
+
+def process_message(message):
+
+    if not message:
+        return
+
+    chat = message.get("chat")
+
+    if not chat:
+        return
+
+    chat_id = chat.get("id")
+
+    text = message.get("text", "").strip()
+
+    if text == "/start":
+
+        send_message(
+            chat_id,
+            "Salom! RS online bot ishlayapti ✅\n\n"
+            "Bot Telegram xabarlarini qabul qilmoqda."
+        )
+
+    elif text == "/help":
+
+        send_message(
+            chat_id,
+            "Yordam:\n\n"
+            "/start — botni ishga tushirish\n"
+            "/help — yordam"
+        )
+
+    elif text:
+
+        send_message(
+            chat_id,
+            f"Xabaringiz qabul qilindi ✅\n\n{text}"
+        )
+
+
+# ==============================
+# TELEGRAM POLLING
 # ==============================
 
 def bot_loop():
 
-    prepare_bot()
-
     offset = 0
 
-    print("Telegram bot ishga tushdi!")
+    print("================================")
+    print("Telegram bot ishga tushmoqda...")
+    print("================================")
+
+    # Eski webhook bo'lsa olib tashlaymiz
+    try:
+        telegram("deleteWebhook", {"drop_pending_updates": "false"})
+        print("Webhook tozalandi.")
+    except Exception as e:
+        print("Webhook tozalash xatosi:", e)
+
+    # Botni tekshiramiz
+    try:
+        me = telegram("getMe")
+
+        if me.get("ok"):
+            bot = me["result"]
+            print(
+                "BOT:",
+                bot.get("first_name"),
+                "@"+bot.get("username", "")
+            )
+        else:
+            print("getMe xatosi:", me)
+
+    except Exception as e:
+        print("Telegram ulanish xatosi:", e)
+
+    print("Polling boshlandi...")
 
     while True:
 
@@ -99,7 +157,7 @@ def bot_loop():
             )
 
             if not result.get("ok"):
-                print("Telegram API xatosi:", result)
+                print("getUpdates xatosi:", result)
                 time.sleep(5)
                 continue
 
@@ -107,75 +165,34 @@ def bot_loop():
 
             for update in updates:
 
-                # keyingi update uchun offset
-                offset = update["update_id"] + 1
+                update_id = update.get("update_id")
 
-                message = update.get("message")
+                if update_id is not None:
+                    offset = update_id + 1
 
-                if not message:
-                    continue
+                try:
+                    message = update.get("message")
 
-                chat = message.get("chat")
+                    if message:
+                        print(
+                            "Yangi xabar:",
+                            message.get("text", "")
+                        )
 
-                if not chat:
-                    continue
+                        process_message(message)
 
-                chat_id = chat.get("id")
-
-                text = message.get("text", "").strip()
-
-                print(
-                    "Xabar:",
-                    chat_id,
-                    text
-                )
-
-                # ==========================
-                # /start
-                # ==========================
-
-                if text == "/start":
-
-                    send_message(
-                        chat_id,
-                        "Salom! RS online bot ishlayapti ✅\n\n"
-                        "Bot sizning xabarlaringizni qabul qildi."
-                    )
-
-                # ==========================
-                # /help
-                # ==========================
-
-                elif text == "/help":
-
-                    send_message(
-                        chat_id,
-                        "Buyruqlar:\n\n"
-                        "/start - Botni ishga tushirish\n"
-                        "/help - Yordam"
-                    )
-
-                # ==========================
-                # BOSHQA XABARLAR
-                # ==========================
-
-                else:
-
-                    send_message(
-                        chat_id,
-                        "Xabaringiz qabul qilindi ✅\n\n"
-                        f"Siz yozdingiz: {text}"
-                    )
+                except Exception as e:
+                    print("Xabarni qayta ishlash xatosi:", e)
 
         except Exception as e:
 
-            print("Bot xatosi:", e)
+            print("Polling xatosi:", e)
 
             time.sleep(5)
 
 
 # ==============================
-# RENDER SERVER
+# RENDER HEALTH SERVER
 # ==============================
 
 class Handler(BaseHTTPRequestHandler):
@@ -192,8 +209,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         self.wfile.write(
-            b"RS online bot ishlayapti!"
+            b"RS online bot ishlayapti"
         )
+
+    def do_HEAD(self):
+
+        self.send_response(200)
+
+        self.send_header(
+            "Content-Type",
+            "text/plain"
+        )
+
+        self.end_headers()
 
     def log_message(self, format, *args):
         return
@@ -205,13 +233,13 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
 
-    # Telegram botni alohida threadda ishga tushirish
-    thread = threading.Thread(
+    # Telegram botni alohida threadda ishga tushiramiz
+    bot_thread = threading.Thread(
         target=bot_loop,
         daemon=True
     )
 
-    thread.start()
+    bot_thread.start()
 
     # Render porti
     port = int(
@@ -223,16 +251,13 @@ def main():
         Handler
     )
 
-    print(
-        f"Render server ishga tushdi: {port}"
-    )
+    print("================================")
+    print(f"Render server ishga tushdi: {port}")
+    print("RS online bot tayyor.")
+    print("================================")
 
     server.serve_forever()
 
-
-# ==============================
-# START
-# ==============================
 
 if __name__ == "__main__":
     main()
