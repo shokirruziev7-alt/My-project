@@ -3,8 +3,8 @@ import json
 import time
 import urllib.request
 import urllib.parse
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -27,7 +27,7 @@ def telegram(method, data=None):
         return json.loads(response.read().decode())
 
 
-def send(chat_id, text):
+def send_message(chat_id, text):
     telegram("sendMessage", {
         "chat_id": chat_id,
         "text": text
@@ -35,10 +35,9 @@ def send(chat_id, text):
 
 
 def bot_loop():
-    # Eski webhook bo‘lsa o‘chiradi
-    telegram("deleteWebhook")
-
     offset = 0
+
+    print("Telegram bot ishga tushdi!")
 
     while True:
         try:
@@ -50,55 +49,45 @@ def bot_loop():
             for update in result.get("result", []):
                 offset = update["update_id"] + 1
 
-                message = update.get("message", {})
-                chat = message.get("chat", {})
-                chat_id = chat.get("id")
-                text = message.get("text", "")
-
-                if not chat_id:
+                message = update.get("message")
+                if not message:
                     continue
 
+                chat_id = message["chat"]["id"]
+                text = message.get("text", "")
+
                 if text == "/start":
-                    send(
+                    send_message(
                         chat_id,
-                        "Salom! 👋\n\n"
-                        "RS online bot ishga tushdi.\n"
-                        "Buyruq yuboring."
+                        "Salom! RS online bot ishlayapti ✅"
                     )
-
-                elif text == "/help":
-                    send(
-                        chat_id,
-                        "Buyruqlar:\n"
-                        "/start - botni boshlash\n"
-                        "/help - yordam"
-                    )
-
                 else:
-                    send(
+                    send_message(
                         chat_id,
-                        "Xabaringiz qabul qilindi: " + text
+                        "Xabaringiz qabul qilindi ✅"
                     )
 
         except Exception as e:
-            print("Xatolik:", e)
+            print("Bot xatosi:", e)
             time.sleep(5)
 
 
 class Handler(BaseHTTPRequestHandler):
-
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"Bot ishlayapti!")
+        self.wfile.write(b"RS online bot ishlayapti!")
 
     def log_message(self, format, *args):
         return
 
 
 def main():
-    thread = threading.Thread(target=bot_loop, daemon=True)
+    thread = threading.Thread(
+        target=bot_loop,
+        daemon=True
+    )
     thread.start()
 
     port = int(os.getenv("PORT", "10000"))
@@ -108,7 +97,7 @@ def main():
         Handler
     )
 
-    print("Bot ishga tushdi...")
+    print(f"Server ishga tushdi: {port}")
     server.serve_forever()
 
 
